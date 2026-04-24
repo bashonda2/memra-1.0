@@ -1,0 +1,29 @@
+version: "1.0.0"
+
+api:
+  host: "127.0.0.1"
+  port: 8000
+  api_key: null
+
+frontier:
+  provider: "anthropic"
+  model: "claude-sonnet-4-6"
+  opener_model: "claude-opus-4-6"
+  opener_turns: 1
+  max_tokens: 8192
+
+context_engine:
+  data_dir: "memra_data"
+  max_context_chars: 64000
+  auditor:
+    enabled: true
+    lookback_turns: 3
+
+progressive:
+  phase1_turns: 10
+  phase2_turns: 20
+  keep_last_turns: 5
+
+logging:
+  level: "INFO"
+  log_to_stdout: true
