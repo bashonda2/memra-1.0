@@ -19,6 +19,10 @@ context_engine:
     enabled: true
     lookback_turns: 3
 
+triage:
+  enabled: true
+  threshold: 0.5
+
 progressive:
   phase1_turns: 10
   phase2_turns: 20

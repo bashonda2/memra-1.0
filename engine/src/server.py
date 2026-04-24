@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse
 
 from .api.openai_routes import router as openai_router
 from .orchestrator.frontier_client import FrontierClient
+from .orchestrator.triage import TriageClassifier, TriageResult
 from .session.manager import SessionManager
 from .profile.user_profile import UserProfile
 
@@ -45,6 +46,13 @@ class MemraEngine:
         self.opener_model = frontier_config.get("opener_model", "claude-opus-4-6")
         self.opener_turns = frontier_config.get("opener_turns", 1)
 
+        triage_config = config.get("triage", {})
+        self.triage = TriageClassifier(
+            frontier_threshold=triage_config.get("threshold", 0.5),
+        )
+        self.triage_enabled = triage_config.get("enabled", False)
+        self._last_triage: Optional[TriageResult] = None
+
     def resolve_session(self, req: Request) -> str:
         return self.session_mgr.resolve_session(req)
 
@@ -70,6 +78,16 @@ class MemraEngine:
             if turn_count <= self.opener_turns:
                 model_override = self.opener_model
                 logger.info("Opus opener: turn %d — using %s", turn_count + 1, self.opener_model)
+
+        if self.triage_enabled and user_text and not is_metadata:
+            triage_result = self.triage.classify(user_text)
+            self._last_triage = triage_result
+            logger.info("Triage: route=%s score=%.2f conf=%.2f — %s",
+                        triage_result.route, triage_result.complexity_score,
+                        triage_result.confidence, triage_result.reasoning)
+
+            if triage_result.route == "local":
+                logger.info("ROUTINE query — would route local (frontier fallback until local models ready)")
 
         result = await self.frontier.generate(
             messages,

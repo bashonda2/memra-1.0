@@ -31,6 +31,7 @@ from src.context.transcript import TranscriptWriter
 from src.context.structured_state import StructuredState
 from src.context.auditor import Auditor
 from src.context.seeds import SeedStore
+from src.context.entity_resolution import EntityRegistry
 from src.profile.user_profile import UserProfile
 
 logging.basicConfig(level=logging.INFO, stream=sys.stderr)
@@ -74,6 +75,7 @@ auditor = Auditor(
     enabled=ce_config.get("auditor", {}).get("enabled", True),
 )
 profile = UserProfile(data_dir=f"{data_dir}/profile")
+entities = EntityRegistry(data_dir=f"{data_dir}/entities")
 
 _current_session: Optional[str] = None
 
@@ -120,10 +122,11 @@ def memra_remember(
     transcript.append(session_id, "system", f"[REMEMBERED] {content}", turn=turn)
     profile.add_fact(content, source_session=session_id)
 
-    meta = state.get_meta(session_id)
-    if meta:
-        if category == "preference":
-            profile.add_preference(content)
+    if category == "preference":
+        profile.add_preference(content)
+
+    extracted_entities = entities.auto_extract_entities(content)
+    entity_names = [e["canonical"] for e in extracted_entities]
 
     return json.dumps({
         "status": "remembered",
@@ -131,6 +134,7 @@ def memra_remember(
         "category": category,
         "session": session_id,
         "profile_facts": len(profile._profile.get("facts", [])),
+        "entities_detected": entity_names,
     })
 
 
@@ -155,6 +159,10 @@ def memra_recall(
     if profile_ctx:
         result["profile"] = profile_ctx
 
+    entity_ctx = entities.get_context()
+    if entity_ctx:
+        result["entities"] = entity_ctx
+
     session_ctx = state.load(session_id)
     if session_ctx:
         result["session_state"] = session_ctx
@@ -170,6 +178,7 @@ def memra_recall(
     result["session_id"] = session_id
     result["turn_count"] = transcript.turn_count(session_id)
     result["total_facts"] = len(profile._profile.get("facts", []))
+    result["total_entities"] = len(entities.get_all())
 
     if not profile_ctx and not session_ctx:
         result["note"] = "No context yet. Memra learns as you share information."

@@ -1,9 +1,18 @@
 [project]
 name = "memra"
-version = "1.0.0"
-description = "Memra 1.0 — context engine with persistent memory for AI agents"
-requires-python = ">=3.9"
+version = "1.1.0"
+description = "Your AI just got a memory. Drop-in context engine with persistent memory, intelligent routing, and entity resolution."
+requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
+authors = [{name = "Aaron Blonquist", email = "aaron@memra.ai"}]
+# readme = "README.md"  # set when publishing to PyPI
+keywords = ["ai", "memory", "context", "mcp", "agent", "sovereign", "llm"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 
 dependencies = [
     "fastapi>=0.115.0",
@@ -15,6 +24,10 @@ dependencies = [
     "anthropic>=0.49.0",
     "fastmcp>=2.0.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/bashonda2/memra-1.0"
+Repository = "https://github.com/bashonda2/memra-1.0"
 
 [project.scripts]
 memra = "src.cli:main"
