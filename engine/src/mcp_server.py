@@ -34,6 +34,8 @@ from src.context.seeds import SeedStore
 from src.context.entity_resolution import EntityRegistry
 from src.profile.user_profile import UserProfile
 from src.agents.lifecycle import AgentManager
+from src.chain_of_thought.goal_stack import GoalStack
+from src.chain_of_thought.drift_detection import check_drift
 
 logging.basicConfig(level=logging.INFO, stream=sys.stderr)
 logger = logging.getLogger("memra.mcp")
@@ -78,6 +80,7 @@ auditor = Auditor(
 profile = UserProfile(data_dir=f"{data_dir}/profile")
 entities = EntityRegistry(data_dir=f"{data_dir}/entities")
 agent_mgr = AgentManager(data_dir=f"{data_dir}/agents")
+goal_stack = GoalStack(data_dir=f"{data_dir}/goals")
 
 _current_session: Optional[str] = None
 
@@ -164,6 +167,10 @@ def memra_recall(
     entity_ctx = entities.get_context()
     if entity_ctx:
         result["entities"] = entity_ctx
+
+    goal_ctx = goal_stack.get_context()
+    if goal_ctx:
+        result["goals"] = goal_ctx
 
     session_ctx = state.load(session_id)
     if session_ctx:
@@ -255,6 +262,125 @@ def memra_profile() -> str:
         "profile_created": p.get("created", ""),
         "last_updated": p.get("last_updated", ""),
     }, indent=2)
+
+
+@mcp.tool()
+def memra_set_goal(
+    goal: str,
+    subgoals: str = "",
+) -> str:
+    """Set the current working goal with optional subgoals.
+
+    Call this when the user states what they want to accomplish.
+    The goal stack keeps the conversation focused and enables
+    resumption if the session is interrupted.
+
+    Args:
+        goal: The main goal (e.g., "Build the authentication system").
+        subgoals: Comma-separated steps (e.g., "Design schema, Build API, Write tests").
+    """
+    session_id = _get_session()
+    turn = transcript.turn_count(session_id)
+    subgoal_list = [s.strip() for s in subgoals.split(",") if s.strip()] if subgoals else []
+
+    g = goal_stack.set_goal(goal, subgoals=subgoal_list, session_id=session_id, turn=turn)
+
+    return json.dumps({
+        "status": "goal_set",
+        "goal": g.to_dict(),
+        "context_injected": True,
+    })
+
+
+@mcp.tool()
+def memra_update_progress(
+    goal_id: str,
+    subgoal_index: int,
+    status: str,
+    notes: str = "",
+) -> str:
+    """Update progress on a subgoal.
+
+    Args:
+        goal_id: The goal's ID.
+        subgoal_index: Which subgoal (0-based index).
+        status: New status: pending, in_progress, completed, blocked.
+        notes: Optional notes about the progress.
+    """
+    g = goal_stack.update_subgoal(goal_id, subgoal_index, status, notes)
+    if not g:
+        return json.dumps({"error": "Goal or subgoal not found."})
+
+    return json.dumps({
+        "status": "updated",
+        "goal": g.to_dict(),
+    })
+
+
+@mcp.tool()
+def memra_check_focus(
+    recent_messages: str = "",
+) -> str:
+    """Check if the conversation is still on track with active goals.
+
+    Call this periodically (every 5-10 turns) or when the conversation
+    seems to have drifted. Returns drift detection results and the
+    current goal stack.
+
+    Args:
+        recent_messages: Last few user messages, newline-separated. If empty, uses session transcript.
+    """
+    session_id = _get_session()
+
+    if recent_messages:
+        messages = [m.strip() for m in recent_messages.split("\n") if m.strip()]
+    else:
+        entries = transcript.read_last_n_turns(session_id, 5)
+        messages = [e["content"] for e in entries if e.get("role") == "user"]
+
+    active = goal_stack.get_active_goals()
+    active_dicts = [g.to_dict() for g in active]
+
+    drift = check_drift(messages, active_dicts)
+
+    result = {
+        "drift": drift,
+        "active_goals": active_dicts,
+        "goal_context": goal_stack.get_context(),
+    }
+
+    if drift.get("drifted"):
+        result["recommendation"] = "The conversation has drifted from the active goal. Consider refocusing or updating the goal."
+
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def memra_resume() -> str:
+    """Get resumption context — what was I working on?
+
+    Call this at the start of a new session to pick up where you left off.
+    Returns active goals, progress, what's done, and what's next.
+    """
+    session_id = _get_session()
+
+    resumption = goal_stack.get_resumption_context()
+    profile_ctx = profile.get_context()
+    active_agents = agent_mgr.list_active()
+
+    result = {
+        "resumption": resumption or "No active goals. What would you like to work on?",
+        "profile": profile_ctx or "No profile yet.",
+        "active_agents": len(active_agents),
+    }
+
+    if active_agents:
+        result["agents"] = [
+            {"name": a.name, "goal": a.task.goal[:80], "state": a.state.value}
+            for a in active_agents[:5]
+        ]
+
+    return json.dumps(result, indent=2)
 
 
 @mcp.tool()
@@ -376,6 +502,13 @@ def get_context_resource() -> str:
     if seed_ctx:
         parts.append(seed_ctx)
     return "\n\n".join(parts) if parts else "No session context yet."
+
+
+@mcp.resource("memra://goals")
+def get_goals_resource() -> str:
+    """Active goals and progress — what we're working on."""
+    ctx = goal_stack.get_context()
+    return ctx if ctx else "No active goals. Set one with memra_set_goal."
 
 
 @mcp.resource("memra://agents")
