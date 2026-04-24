@@ -36,6 +36,7 @@ from src.profile.user_profile import UserProfile
 from src.agents.lifecycle import AgentManager
 from src.chain_of_thought.goal_stack import GoalStack
 from src.chain_of_thought.drift_detection import check_drift
+from src.orchestrator.triage import classify_query
 
 logging.basicConfig(level=logging.INFO, stream=sys.stderr)
 logger = logging.getLogger("memra.mcp")
@@ -183,6 +184,14 @@ def memra_recall(
     warnings = auditor.get_warnings(session_id)
     if warnings:
         result["audit_warnings"] = warnings
+
+    if query:
+        triage = classify_query(query)
+        result["triage"] = {
+            "route": triage.route,
+            "score": triage.complexity_score,
+            "reasoning": triage.reasoning,
+        }
 
     result["session_id"] = session_id
     result["turn_count"] = transcript.turn_count(session_id)

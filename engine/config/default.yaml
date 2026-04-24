@@ -23,6 +23,11 @@ triage:
   enabled: true
   threshold: 0.5
 
+local:
+  enabled: true
+  model: "qwen3.6"
+  base_url: "http://localhost:11434"
+
 progressive:
   phase1_turns: 10
   phase2_turns: 20

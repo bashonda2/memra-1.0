@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse
 
 from .api.openai_routes import router as openai_router
 from .orchestrator.frontier_client import FrontierClient
+from .orchestrator.local_client import LocalClient
 from .orchestrator.triage import TriageClassifier, TriageResult
 from .session.manager import SessionManager
 from .profile.user_profile import UserProfile
@@ -50,8 +51,14 @@ class MemraEngine:
         self.triage = TriageClassifier(
             frontier_threshold=triage_config.get("threshold", 0.5),
         )
-        self.triage_enabled = triage_config.get("enabled", False)
+        self.triage_enabled = triage_config.get("enabled", True)
         self._last_triage: Optional[TriageResult] = None
+
+        local_config = config.get("local", {})
+        self.local = LocalClient(
+            model=local_config.get("model", "qwen3.6"),
+        )
+        self.local_enabled = local_config.get("enabled", True)
 
     def resolve_session(self, req: Request) -> str:
         return self.session_mgr.resolve_session(req)
@@ -79,6 +86,7 @@ class MemraEngine:
                 model_override = self.opener_model
                 logger.info("Opus opener: turn %d — using %s", turn_count + 1, self.opener_model)
 
+        use_local = False
         if self.triage_enabled and user_text and not is_metadata:
             triage_result = self.triage.classify(user_text)
             self._last_triage = triage_result
@@ -86,15 +94,24 @@ class MemraEngine:
                         triage_result.route, triage_result.complexity_score,
                         triage_result.confidence, triage_result.reasoning)
 
-            if triage_result.route == "local":
-                logger.info("ROUTINE query — would route local (frontier fallback until local models ready)")
+            if triage_result.route == "local" and self.local_enabled and self.local.is_available:
+                use_local = True
+                model_override = None
 
-        result = await self.frontier.generate(
-            messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            model_override=model_override,
-        )
+        if use_local:
+            logger.info("LOCAL: routing to %s (cost: $0)", self.local.model)
+            result = await self.local.generate(
+                messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+        else:
+            result = await self.frontier.generate(
+                messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                model_override=model_override,
+            )
 
         if session_id and not is_metadata and result.get("text"):
             self.record_exchange(session_id, user_text, result["text"])
