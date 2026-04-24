@@ -5,6 +5,7 @@ Handles session resolution (which session is this request part of?),
 context loading and injection, progressive takeover, and exchange recording.
 """
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
@@ -22,7 +23,10 @@ class SessionManager:
 
     def __init__(self, config: dict):
         ce_config = config.get("context_engine", {})
-        data_dir = ce_config.get("data_dir", "memra_data")
+        data_dir = os.environ.get(
+            "MEMRA_DATA_DIR",
+            ce_config.get("data_dir", os.path.join(os.path.expanduser("~"), ".memra")),
+        )
 
         self.transcript = TranscriptWriter(data_dir=f"{data_dir}/transcripts")
         self.state = StructuredState(data_dir=f"{data_dir}/state",
