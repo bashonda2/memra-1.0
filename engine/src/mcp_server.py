@@ -33,6 +33,7 @@ from src.context.auditor import Auditor
 from src.context.seeds import SeedStore
 from src.context.entity_resolution import EntityRegistry
 from src.profile.user_profile import UserProfile
+from src.agents.lifecycle import AgentManager
 
 logging.basicConfig(level=logging.INFO, stream=sys.stderr)
 logger = logging.getLogger("memra.mcp")
@@ -76,6 +77,7 @@ auditor = Auditor(
 )
 profile = UserProfile(data_dir=f"{data_dir}/profile")
 entities = EntityRegistry(data_dir=f"{data_dir}/entities")
+agent_mgr = AgentManager(data_dir=f"{data_dir}/agents")
 
 _current_session: Optional[str] = None
 
@@ -255,6 +257,106 @@ def memra_profile() -> str:
     }, indent=2)
 
 
+@mcp.tool()
+def memra_spawn_agent(
+    name: str,
+    goal: str,
+    constraints: str = "",
+    priority: int = 5,
+    max_turns: int = 100,
+) -> str:
+    """Spawn a persistent agent to work on a task in the background.
+
+    The agent gets its own session in the context engine. It persists
+    across server restarts. Use this for long-running tasks like research,
+    monitoring, writing, or any work that benefits from persistence.
+
+    Args:
+        name: Short name for the agent (e.g., "Research Agent", "Monitor").
+        goal: What the agent should accomplish.
+        constraints: Comma-separated constraints (e.g., "no external APIs, max 50 turns").
+        priority: 1 (highest) to 10 (lowest). Higher priority gets GPU time first.
+        max_turns: Maximum turns before auto-completion.
+    """
+    constraint_list = [c.strip() for c in constraints.split(",") if c.strip()] if constraints else []
+
+    agent = agent_mgr.spawn(
+        name=name,
+        goal=goal,
+        constraints=constraint_list,
+        max_turns=max_turns,
+        priority=priority,
+    )
+
+    state.create(agent.session_id)
+
+    return json.dumps({
+        "status": "spawned",
+        "agent": agent.to_dict(),
+        "note": "Agent created with its own context session. Use memra_list_agents to check status.",
+    })
+
+
+@mcp.tool()
+def memra_list_agents(
+    filter_state: str = "all",
+) -> str:
+    """List all agents and their current status.
+
+    Args:
+        filter_state: Filter by state: "all", "active", "completed", "failed".
+    """
+    if filter_state == "active":
+        agents = agent_mgr.list_active()
+    elif filter_state == "completed":
+        agents = [a for a in agent_mgr.list_all() if a.state.value == "completed"]
+    elif filter_state == "failed":
+        agents = [a for a in agent_mgr.list_all() if a.state.value == "failed"]
+    else:
+        agents = agent_mgr.list_all()
+
+    summary = agent_mgr.get_summary()
+
+    return json.dumps({
+        "agents": [a.to_dict() for a in agents],
+        "summary": summary,
+    }, indent=2)
+
+
+@mcp.tool()
+def memra_agent_action(
+    agent_id: str,
+    action: str,
+    output: str = "",
+) -> str:
+    """Control an agent: start, pause, resume, complete, or kill.
+
+    Args:
+        agent_id: The agent's ID.
+        action: One of: start, pause, resume, complete, kill.
+        output: Optional output/result message (for complete action).
+    """
+    actions = {
+        "start": lambda: agent_mgr.start(agent_id),
+        "pause": lambda: agent_mgr.pause(agent_id),
+        "resume": lambda: agent_mgr.resume(agent_id),
+        "complete": lambda: agent_mgr.complete(agent_id, output),
+        "kill": lambda: agent_mgr.kill(agent_id),
+    }
+
+    if action not in actions:
+        return json.dumps({"error": f"Unknown action: {action}. Use: start, pause, resume, complete, kill."})
+
+    agent = actions[action]()
+    if not agent:
+        return json.dumps({"error": f"Agent not found: {agent_id}"})
+
+    return json.dumps({
+        "status": action,
+        "agent": agent.to_dict(),
+    })
+
+
 @mcp.resource("memra://profile")
 def get_profile_resource() -> str:
     """User profile — what Memra knows about you."""
@@ -274,6 +376,19 @@ def get_context_resource() -> str:
     if seed_ctx:
         parts.append(seed_ctx)
     return "\n\n".join(parts) if parts else "No session context yet."
+
+
+@mcp.resource("memra://agents")
+def get_agents_resource() -> str:
+    """Active agents and their status."""
+    active = agent_mgr.list_active()
+    if not active:
+        return "No active agents."
+    lines = ["Active Agents:"]
+    for a in active:
+        lines.append(f"- [{a.state.value}] {a.name} ({a.agent_id}): {a.task.goal[:80]}")
+        lines.append(f"  Turns: {a.turns_completed}/{a.task.max_turns}, Priority: {a.task.priority}")
+    return "\n".join(lines)
 
 
 if __name__ == "__main__":
