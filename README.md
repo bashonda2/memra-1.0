@@ -1,8 +1,8 @@
-# Memra 1.0
+# Memra
 
 **Your AI just got a memory. And a 93% pay cut.**
 
-Drop-in replacement for your Anthropic/OpenAI API endpoint. Same models, managed context, persistent memory. Works with Cursor, Claude Code, Goose, OpenClaw, or anything OpenAI-compatible.
+Drop-in context engine for any AI tool. Persistent memory, intelligent routing, background agents, chain of thought — all local. Works with Cursor, Claude Code, Goose, OpenClaw, or anything MCP/OpenAI-compatible.
 
 ---
 
@@ -11,58 +11,99 @@ Drop-in replacement for your Anthropic/OpenAI API endpoint. Same models, managed
 ```bash
 git clone https://github.com/bashonda2/memra-1.0.git
 cd memra-1.0
-./install.sh
-./start.sh
+python3.12 -m venv venv && source venv/bin/activate
+pip install -e engine/
+memra setup       # auto-configures Cursor
+# restart Cursor — Memra is there
 ```
 
-Then point your AI tool at `http://localhost:8000`. Done.
+Or start the HTTP API server:
+
+```bash
+memra server      # runs on localhost:8000
+```
 
 ---
 
 ## What It Does
 
-Every AI tool sends your entire conversation history to the model on every turn. That's expensive, slow, and gets worse the longer you work.
+AI tools forget everything between sessions. Memra gives them persistent, compounding memory.
 
-Memra sits between your AI tool and the model. It manages what the model sees:
+### Context Engine (Pillar 1)
 
-- **Tier 1 (Transcripts):** Immutable ground truth. Every exchange saved verbatim. Never lost.
+- **Tier 1 (Transcripts):** Immutable ground truth. Every exchange saved verbatim.
 - **Tier 2 (Structured State):** ~2K tokens instead of 50K+ raw history. Decisions, files, errors, personal context — extracted automatically.
 - **Tier 3 (Deep Memory):** Resolved content compressed into seeds. 60% smaller, 100% fidelity.
-- **Progressive Takeover:** Turns 1-10 pass-through. Turns 11-20 enrich. Turns 21+ replace raw history with managed context.
-- **Opus Opener:** Turn 1 uses Opus for the best first impression. Sonnet on all subsequent turns.
-- **Self-Auditing:** Tenth Man auditor validates managed context against transcripts every few turns.
-- **User Profile:** Learns your preferences, tools, and patterns. Gets smarter across sessions.
+- **Progressive Takeover:** Turns 1-10 pass-through, 11-20 enrich, 21+ replace.
+- **Opus Opener:** Turn 1 uses Opus for best first impression. Sonnet after.
+- **Tenth Man Auditor:** Validates managed context against transcripts.
+- **User Profile:** Learns preferences and patterns. Gets smarter across sessions.
+- **Entity Resolution:** "my wife," "Sarah," "her" collapse into one canonical entity.
 
-Your AI tool doesn't know the difference. It sends messages to `localhost:8000` the same way it sends them to `api.anthropic.com`. Memra handles the rest.
+### Persistent Agent Swarm (Pillar 2)
+
+- **Spawn agents** for background tasks — research, monitoring, writing.
+- **Each agent** gets its own context session. Persists to disk. Survives restarts.
+- **GPU-aware queue** serializes local Metal inference, parallelizes frontier calls.
+- **Priority scheduling** — urgent agents get GPU time first.
+- **Sub-agents** — agents can spawn child agents.
+
+### Chain of Thought (Pillar 3)
+
+- **Goal Stack:** Set goals with subgoals. Progress tracked and injected into every model call.
+- **Drift Detection:** Flags when conversation diverges from the active goal.
+- **Resumption Protocol:** "Last session you completed A/B. Next: C." Pick up where you left off.
+
+### Cross-Layer Intelligence (The Moat)
+
+- Profile-informed routing: user prefers concise answers → borderline queries stay local.
+- Goal alignment: triage knows what you're working on → routes accordingly.
+- Agent awareness: relevant background agents surfaced when you ask related questions.
+- End-of-session check: catches stalled goals, stuck agents, thin profiles, audit warnings.
+- Kaizen: continuous improvement proposals based on session patterns.
+
+---
+
+## MCP Tools (11)
+
+| Tool | Purpose |
+|------|---------|
+| `memra_remember` | Store facts, preferences, decisions |
+| `memra_recall` | Load context, profile, goals, entities |
+| `memra_context` | Record exchanges, get updated state |
+| `memra_profile` | Show what Memra knows about you |
+| `memra_set_goal` | Set working goal with subgoals |
+| `memra_update_progress` | Update subgoal status |
+| `memra_check_focus` | Drift detection — am I still on track? |
+| `memra_resume` | Pick up where you left off |
+| `memra_spawn_agent` | Create a persistent background agent |
+| `memra_list_agents` | See all agents and their status |
+| `memra_agent_action` | Start, pause, resume, complete, or kill an agent |
+
+## MCP Resources (4)
+
+| Resource | What it provides |
+|----------|-----------------|
+| `memra://profile` | User profile — auto-loaded |
+| `memra://context` | Session state — auto-loaded |
+| `memra://goals` | Active goals and progress |
+| `memra://agents` | Active agents and status |
 
 ---
 
 ## Connect Your Tool
 
-### Cursor
+### Cursor (MCP — recommended)
 
-Settings → Models → Override OpenAI Base URL → `http://localhost:8000/v1`
+```bash
+memra setup    # auto-configures .cursor/mcp.json
+```
 
 ### Claude Code
 
 ```bash
 export ANTHROPIC_BASE_URL=http://localhost:8000
-```
-
-### Goose
-
-Edit `~/.config/goose/config.yaml`:
-```yaml
-provider:
-  type: openai
-  host: http://localhost:8000
-```
-
-### OpenClaw
-
-In your `.env`:
-```
-OPENAI_BASE_URL=http://localhost:8000/v1
+memra server
 ```
 
 ### Any OpenAI SDK
@@ -70,87 +111,72 @@ OPENAI_BASE_URL=http://localhost:8000/v1
 ```python
 from openai import OpenAI
 client = OpenAI(base_url="http://localhost:8000/v1", api_key="unused")
-response = client.chat.completions.create(
-    model="memra",
-    messages=[{"role": "user", "content": "Hello"}]
-)
 ```
 
 ---
 
-## How It Works
+## CLI
 
+```bash
+memra serve     # Start MCP server (stdio, for Cursor)
+memra server    # Start HTTP API server (localhost:8000)
+memra setup     # Auto-configure Cursor MCP
+memra status    # Show profile stats and data directory
 ```
-You → Your AI Tool → Memra (localhost:8000) → Anthropic API
-                          │
-          ┌───────────────┤
-          │               │
-    Session Manager   Context Engine
-          │               │
-    Progressive       ┌───┴───┐
-    Takeover     Tier 1  Tier 2  Deep Memory
-                (raw)  (managed) (compressed)
-                          │
-                    Tenth Man Auditor
-                  (validates accuracy)
-```
-
-Memra intercepts requests, injects managed context, and proxies to the frontier model. The model gets the right context at the right time — not everything, not nothing, but exactly what it needs.
 
 ---
 
-## What Gets Saved
-
-All data stays local in `memra_data/`:
+## Architecture
 
 ```
-memra_data/
-  transcripts/    # Tier 1 — every exchange, verbatim, JSONL
-  state/          # Tier 2 — structured state per session, markdown
+User → AI Tool → Memra Engine
+                     │
+    ┌────────────────┼────────────────┐
+    │                │                │
+Coordinator     Context Engine    Agent Manager
+(cross-layer)        │            (spawn/queue)
+    │         ┌──────┼──────┐         │
+    │      Tier 1  Tier 2  Seeds   GPU Queue
+    │      (raw)  (managed) (cold)    │
+    │         │                  ┌────┴────┐
+  Triage    Auditor           Local    Frontier
+  Router   (Tenth Man)        (MLX)    (API)
+    │
+ Profile ←→ Entities ←→ Goals ←→ Kaizen
+    └──── feedback loops ────┘
+```
+
+---
+
+## Data
+
+All data stays local in `~/.memra/`:
+
+```
+~/.memra/
+  transcripts/    # Tier 1 — every exchange, verbatim
+  state/          # Tier 2 — structured state per session
   seeds/          # Deep Memory — compressed resolved content
   audit_log/      # Tenth Man findings
-  profile/        # User profile (preferences, patterns)
+  profile/        # User profile
+  entities/       # Entity registry
+  goals/          # Goal stack
+  agents/         # Agent definitions
+  kaizen/         # Improvement log
 ```
 
-Nothing leaves your machine except the API calls to your model provider (which you're already making).
-
----
-
-## Configuration
-
-Edit `engine/config/default.yaml`:
-
-```yaml
-frontier:
-  model: "claude-sonnet-4-6"       # Default model
-  opener_model: "claude-opus-4-6"  # Turn 1 model (best first impression)
-  opener_turns: 1                   # How many turns use the opener
-
-progressive:
-  phase1_turns: 10    # Pass-through (no context replacement)
-  phase2_turns: 20    # Enrich (add context alongside history)
-  keep_last_turns: 5  # In phase 3, keep last N turns + managed context
-```
+Nothing leaves your machine except the API calls you're already making.
 
 ---
 
 ## The Framework
 
-Memra 1.0 implements the [Context Infrastructure Framework 3.2](framework/FRAMEWORK.md) — a production-tested methodology for persistent AI agent memory. The framework defines the five-document architecture, the Tenth Man self-auditing rule, the Kaizen continuous improvement engine, and the hot/warm/cold memory model. The engine automates what the framework describes.
-
----
-
-## Roadmap
-
-- **1.0** — Context engine, persistent memory, Opus opener, progressive takeover (this release)
-- **1.1** — Triage routing (local vs. frontier), local MLX inference, entity resolution
-- **2.0** — Persistent agent swarm, chain of thought tracking, vector retrieval
-- **3.0** — Protocol adapters, iOS app, behavioral model
+Memra implements the [Context Infrastructure Framework 3.2](framework/FRAMEWORK.md) — a production-tested methodology for persistent AI agent memory with five-document architecture, Tenth Man self-auditing, Kaizen continuous improvement, and hot/warm/cold memory tiers.
 
 ---
 
 ## License
 
-Apache License 2.0. Use it, fork it, ship it. See [LICENSE](LICENSE).
+Apache License 2.0. See [LICENSE](LICENSE).
 
-Copyright 2026 Aaron Blonquist.
+Copyright 2026 Aaron Blonquist / Memra Technologies Inc.
